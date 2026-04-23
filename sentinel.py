@@ -19,7 +19,7 @@ def check_status():
         if remaining < 24:
             alerts.append({
                 "type": "LOW_BALANCE_WARNING",
-                "message": f"Niaje! You only have {remaining:.1f} hours of power left based on your current usage. You'll likely run out by { (datetime.now() + timedelta(hours=remaining)).strftime('%H:%M %p') }. Top up soon!"
+                "message": f"Niaje! You only have {remaining:.1f} hours of power left based on your current usage. You'll likely run out by { (datetime.now() + timedelta(hours=remaining)).strftime('%I:%M %p') }. Top up soon!"
             })
     
     # If no reading in 48 hours, ask for a spot check

@@ -1,4 +1,5 @@
 import sys
+import sqlite3
 from init_db import init_db
 from parser import parse_kplc_sms
 from logic import (
@@ -7,7 +8,11 @@ from logic import (
     monthly_summary, yearly_summary, price_trend, check_outages
 )
 
-init_db()
+try:
+    init_db()
+except sqlite3.Error as e:
+    print(f"Database error during startup: {e}")
+    sys.exit(1)
 
 ONBOARDING_QUESTIONS = [
     ("occupants", "How many people live in your household?"),
@@ -16,6 +21,12 @@ ONBOARDING_QUESTIONS = [
 ]
 
 def handle_message(text):
+    try:
+        return _handle_message(text)
+    except sqlite3.Error as e:
+        return f"Something went wrong with the database: {e}. Try again shortly."
+
+def _handle_message(text):
     text = text.strip()
     lower = text.lower()
 
@@ -48,7 +59,8 @@ def handle_message(text):
     # --- KPLC SMS parsing ---
     parsed = parse_kplc_sms(text)
     if parsed["success"]:
-        add_purchase(parsed["token"], parsed["units"], parsed["amount"], text)
+        if not add_purchase(parsed["token"], parsed["units"], parsed["amount"], text):
+            return f"Token {parsed['token']} was already recorded. No duplicate added."
         remaining = predict_blackout()
         response = f"Got it! Token {parsed['token']} for {parsed['units']} units added."
         if remaining:

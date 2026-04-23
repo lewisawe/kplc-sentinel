@@ -11,12 +11,17 @@ def get_db_connection():
 def add_purchase(token, units, amount, raw_text):
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor.execute("SELECT id FROM purchases WHERE token = ?", (token,))
+    if cursor.fetchone():
+        conn.close()
+        return False  # duplicate
     cursor.execute(
         "INSERT INTO purchases (token, units, amount, raw_text) VALUES (?, ?, ?, ?)",
         (token, units, amount, raw_text)
     )
     conn.commit()
     conn.close()
+    return True
 
 def add_reading(balance, notes=None):
     conn = get_db_connection()
@@ -284,7 +289,7 @@ def check_outages(area=None):
     """Check for planned outages in the user's area."""
     area = area or get_profile("area")
     if not area:
-        return None
+        return "I don't know your area yet. Type 'setup' to set your location so I can check for outages."
 
     scheduled = _fetch_outage_schedule()
     if not scheduled:

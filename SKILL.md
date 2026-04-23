@@ -1,13 +1,8 @@
 ---
 name: kplc-sentinel
 description: Track Kenyan prepaid electricity (KPLC) tokens, predict blackout times, and get proactive low-balance alerts — all through chat.
-version: 1.0.0
-metadata:
-  openclaw:
-    requires:
-      bins:
-        - python3
-    emoji: "⚡"
+version: 1.3.2
+metadata: {"openclaw":{"emoji":"⚡","requires":{"bins":["python3"]}}}
 ---
 
 # KPLC Token Sentinel

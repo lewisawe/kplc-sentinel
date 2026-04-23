@@ -33,6 +33,16 @@ def parse_kplc_sms(text):
             "success": True
         }
     
+    # Alternate format: "token is 1234-5678-... for 12.5 units"
+    alt = re.search(r'token\s+is\s+([\d-]+)\s+for\s+([\d.]+)\s+units', text, re.IGNORECASE)
+    if alt:
+        return {
+            "token": alt.group(1).replace("-", ""),
+            "units": float(alt.group(2)),
+            "amount": 0.0,
+            "success": True
+        }
+
     return {"success": False, "error": "Could not find token or units in the message."}
 
 # Testing the parser
