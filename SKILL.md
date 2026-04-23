@@ -1,7 +1,7 @@
 ---
 name: kplc-sentinel
 description: Track Kenyan prepaid electricity (KPLC) tokens, predict blackout times, and get proactive low-balance alerts — all through chat.
-version: 1.3.3
+version: 1.4.0
 metadata: {"openclaw":{"emoji":"⚡","requires":{"bins":["python3"]}}}
 ---
 
@@ -24,6 +24,9 @@ All other interactions MUST start with the word "stima". Examples:
 - "stima spending" → spending dashboard
 - "stima outage" → planned outage check
 - "stima setup" → household onboarding
+- "stima budget 3000" → set monthly budget
+- "stima budget" → check budget status
+- "stima insights" → week-over-week comparison and day patterns
 - "stima monthly" / "stima yearly" → reports
 - "stima profile" → show household info
 
@@ -39,14 +42,16 @@ python3 entrypoint.py "<user message>"
 ```
 
 The entrypoint handles all routing internally:
-- KPLC SMS → parses and stores the token purchase
+- KPLC SMS → parses and stores the token purchase, estimates days it will last
 - Plain number → records as a meter reading
+- "budget <amount>" → sets monthly budget; "budget" alone → checks status
+- "insights"/"compare" → week-over-week and day-of-week patterns
 - "monthly"/"yearly"/"spending" → spending dashboards
 - "price"/"tariff"/"increase" → price-per-unit trend analysis
 - "outage"/"interruption"/"maintenance" → planned outage alerts for user's area
 - Keywords (balance, stima, power, units) → returns current estimate
 - "setup"/"hi"/"hello" → starts household onboarding
-- "profile"/"household"/"info" → shows household profile
+- "profile"/"household"/"info" → shows household profile and budget
 
 **Return the output directly to the user.** If the output is `None`, the message wasn't handled — let the agent respond normally.
 

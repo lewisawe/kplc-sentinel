@@ -45,13 +45,15 @@ pip install pdfplumber
 openclaw gateway
 ```
 
-Message your OpenClaw agent on WhatsApp and say "hi" to start onboarding.
+Message your OpenClaw agent on WhatsApp and say "stima hi" to start onboarding.
 
 ## Usage
 
-**Onboarding:** Say "hi" or "setup". The skill asks for your household size, area/estate, and appliances.
+All commands use the `stima` prefix to prevent the skill from responding to unrelated conversations. Forwarded KPLC SMS messages are auto-detected without a prefix.
 
-**Track a token purchase:** Forward your KPLC SMS to the chat. The skill parses the token, units, and amount automatically.
+**Onboarding:** Say "stima hi" or "stima setup". The skill asks for your household size, area/estate, and appliances.
+
+**Track a token purchase:** Forward your KPLC SMS to the chat. The skill parses the token, units, and amount automatically, and estimates how many days it will last.
 
 Example SMS formats it recognizes:
 ```
@@ -59,15 +61,21 @@ Accept Token: 1234-5678-9012-3456-7890 Units: 34.5 Amount: 1000.00
 Token: 9876-5432-1098 Units: 15.2 Amt: 500.0
 ```
 
-**Record a meter reading:** Press 20# on your meter and type the number (e.g. "42.5").
+**Record a meter reading:** Press 20# on your meter and type "stima 42.5".
 
-**Check your balance:** Ask "how much stima?" or "balance" or "power".
+**Check your balance:** "stima balance" or "stima power".
 
-**Spending dashboards:** Say "monthly", "yearly", or "spending".
+**Budget:** "stima budget 3000" to set, "stima budget" to check.
 
-**Price trends:** Ask "price trend" or "tariff increase".
+**Usage insights:** "stima insights" for week-over-week comparison and day patterns.
 
-**Planned outages:** Ask "any outages?" — the skill scrapes KPLC's maintenance schedule PDF and checks for your area.
+**Spending dashboards:** "stima monthly", "stima yearly", or "stima spending".
+
+**Price trends:** "stima price" or "stima tariff".
+
+**Planned outages:** "stima outage" — the skill scrapes KPLC's maintenance schedule PDF and checks for your area.
+
+**Profile:** "stima profile" to see household info and budget status.
 
 ## How it works
 
@@ -75,6 +83,9 @@ The skill stores all data in a local SQLite database. Nothing leaves your machin
 
 - **Burn rate:** Weighted average across all meter readings, with exponential decay so recent usage matters more
 - **Blackout prediction:** Current balance divided by burn rate
+- **Token-to-days:** Estimates how long a new purchase will last based on burn rate
+- **Budget tracking:** Set a monthly KES limit, warns at 80% and 100%
+- **Usage insights:** Week-over-week comparison and heaviest/lightest day detection
 - **Household tips:** When balance is low, suggests turning off heavy appliances from your profile
 - **Outage alerts:** Downloads and parses KPLC's two-column maintenance PDF, matches against your area
 - **Price trends:** Tracks cost-per-unit across months, shows percentage changes

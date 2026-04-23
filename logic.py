@@ -1,7 +1,7 @@
 import sqlite3
 import os
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "kplc.sqlite")
 
@@ -328,38 +328,96 @@ def predict_blackout():
 
     return row[0] / burn_rate
 
-if __name__ == "__main__":
-    # Clean up and reset for testing
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
-    
-    from init_db import init_db
-    init_db()
 
-    # Simulate some data
-    add_purchase("ABC", 50.0, 1000.0, "KPLC Accept...")
-    add_reading(45.0, "Initial reading")
-    
-    # Simulate 24 hours later
-    from datetime import timedelta
-    
+def estimate_days(units):
+    """Estimate how many days a token purchase will last based on burn rate."""
+    burn_rate = calculate_burn_rate()
+    if not burn_rate or burn_rate == 0:
+        return None
+    return units / (burn_rate * 24)
+
+
+def set_budget(amount):
+    """Set monthly electricity budget in KES."""
+    set_profile("budget", str(amount))
+
+
+def check_budget():
+    """Check spending against monthly budget. Returns alert string or None."""
+    budget_str = get_profile("budget")
+    if not budget_str:
+        return None
+    budget = float(budget_str)
+    now = datetime.now()
+    start = f"{now.year}-{now.month:02d}-01 00:00:00"
+    if now.month == 12:
+        end = f"{now.year + 1}-01-01 00:00:00"
+    else:
+        end = f"{now.year}-{now.month + 1:02d}-01 00:00:00"
+
     conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Set first reading and purchase to 24 hours ago
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("UPDATE readings SET timestamp = ? WHERE id = 1", (yesterday,))
-    cursor.execute("UPDATE purchases SET timestamp = ? WHERE id = 1", (yesterday,))
-    conn.commit()
+    c = conn.cursor()
+    c.execute("SELECT COALESCE(SUM(amount),0) FROM purchases WHERE timestamp >= ? AND timestamp < ?", (start, end))
+    spent = c.fetchone()[0]
     conn.close()
-    
-    # Add a current reading (this should no longer be locked)
-    add_reading(30.0, "Current check")
-    
-    rate = calculate_burn_rate()
-    remaining = predict_blackout()
-    
-    if rate is not None:
-        print(f"Burn Rate: {rate:.4f} units/hour")
-    if remaining is not None:
-        print(f"Hours Remaining: {remaining:.2f} hours")
+
+    pct = (spent / budget) * 100 if budget > 0 else 0
+    if pct >= 100:
+        return f"🚨 Umepita budget! KES {spent:,.0f}/{budget:,.0f} ({pct:.0f}%) this month."
+    elif pct >= 80:
+        return f"⚠️ Budget almost done — KES {spent:,.0f}/{budget:,.0f} ({pct:.0f}%) used this month."
+    return f"💰 Budget: KES {spent:,.0f}/{budget:,.0f} ({pct:.0f}%) used this month."
+
+
+def comparison_insights():
+    """Week-over-week and day-of-week usage patterns."""
+    conn = get_db_connection()
+    c = conn.cursor()
+    now = datetime.now()
+    week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    two_weeks_ago = (now - timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+
+    # This week vs last week spending
+    c.execute("SELECT COALESCE(SUM(amount),0), COALESCE(SUM(units),0) FROM purchases WHERE timestamp >= ?", (week_ago,))
+    this_spent, this_units = c.fetchone()
+    c.execute("SELECT COALESCE(SUM(amount),0), COALESCE(SUM(units),0) FROM purchases WHERE timestamp >= ? AND timestamp < ?", (two_weeks_ago, week_ago))
+    last_spent, last_units = c.fetchone()
+
+    # Day-of-week consumption from readings
+    c.execute("SELECT strftime('%w', timestamp), balance FROM readings ORDER BY timestamp ASC")
+    readings = c.fetchall()
+    conn.close()
+
+    lines = ["📈 *Usage Insights*", ""]
+
+    # Week-over-week
+    if last_units > 0 and this_units > 0:
+        diff = ((this_units - last_units) / last_units) * 100
+        if diff > 5:
+            lines.append(f"⬆️ You used {diff:.0f}% more units this week than last week.")
+        elif diff < -5:
+            lines.append(f"⬇️ You used {abs(diff):.0f}% fewer units this week. Poa!")
+        else:
+            lines.append("↔️ Usage ni sawa sawa with last week.")
+    elif this_units > 0:
+        lines.append(f"This week: {this_units:.0f} units (KES {this_spent:,.0f}). No last week data to compare.")
+
+    # Day patterns from readings
+    if len(readings) >= 7:
+        day_usage = {}
+        for i in range(1, len(readings)):
+            dow = int(readings[i][0])
+            burned = readings[i-1][1] - readings[i][1]
+            if burned > 0:
+                day_usage.setdefault(dow, []).append(burned)
+        if day_usage:
+            day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+            avgs = {d: sum(v)/len(v) for d, v in day_usage.items()}
+            if avgs:
+                peak = max(avgs, key=avgs.get)
+                low = min(avgs, key=avgs.get)
+                lines.append(f"📅 Heaviest day: {day_names[peak]} ({avgs[peak]:.1f} units avg)")
+                lines.append(f"📅 Lightest day: {day_names[low]} ({avgs[low]:.1f} units avg)")
+
+    return "\n".join(lines) if len(lines) > 2 else None
+

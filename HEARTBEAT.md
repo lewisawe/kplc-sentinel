@@ -6,6 +6,7 @@
 - LOW_BALANCE_WARNING alerts are urgent — send right away
 - SPOT_CHECK_REQUEST alerts are gentle reminders
 - PLANNED_OUTAGE alerts should be sent once when first detected
+- BUDGET_WARNING alerts should be sent when spending exceeds 80% of monthly budget
 
 ## Every Monday 8:00 AM — Weekly KPLC Summary
 - Run `python3 -c "from sentinel import weekly_summary; s = weekly_summary(); print(s['message'])"` in the kplc-sentinel skill directory

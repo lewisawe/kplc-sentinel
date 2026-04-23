@@ -1,5 +1,5 @@
 from init_db import init_db
-from logic import calculate_burn_rate, predict_blackout, get_db_connection, check_outages
+from logic import calculate_burn_rate, predict_blackout, get_db_connection, check_outages, check_budget, comparison_insights
 from datetime import datetime, timedelta
 
 init_db()
@@ -39,6 +39,11 @@ def check_status():
             "type": "PLANNED_OUTAGE",
             "message": outage_msg
         })
+
+    # Budget warning
+    budget_msg = check_budget()
+    if budget_msg and ("⚠️" in budget_msg or "🚨" in budget_msg):
+        alerts.append({"type": "BUDGET_WARNING", "message": budget_msg})
             
     return alerts
 
@@ -88,6 +93,11 @@ def weekly_summary():
     remaining = predict_blackout()
     if remaining:
         lines.append(f"Current runway: ~{remaining:.0f} hours")
+
+    insights = comparison_insights()
+    if insights:
+        lines.append("")
+        lines.append(insights)
 
     return {
         "type": "WEEKLY_SUMMARY",
