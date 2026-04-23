@@ -28,10 +28,31 @@ def handle_message(text):
 
 def _handle_message(text):
     text = text.strip()
+
+    # Auto-detect forwarded KPLC SMS (no prefix needed)
+    parsed = parse_kplc_sms(text)
+    if parsed["success"]:
+        if not add_purchase(parsed["token"], parsed["units"], parsed["amount"], text):
+            return f"Token {parsed['token']} was already recorded. No duplicate added."
+        remaining = predict_blackout()
+        response = f"Got it! Token {parsed['token']} for {parsed['units']} units added."
+        if remaining:
+            response += f" I estimate you have about {remaining:.1f} hours of power left total."
+            response += _household_tip(remaining)
+        return response
+
+    # All other messages require 'stima' prefix (unless mid-onboarding)
     lower = text.lower()
+    pending = get_profile("onboarding_step")
+    if pending is None and not lower.startswith("stima"):
+        return None  # Not for this skill
+
+    # Strip 'stima' prefix
+    if lower.startswith("stima"):
+        text = text[5:].strip()
+        lower = text.lower()
 
     # --- Onboarding flow ---
-    pending = get_profile("onboarding_step")
     if pending is not None:
         step = int(pending)
         if step < len(ONBOARDING_QUESTIONS):
@@ -55,18 +76,6 @@ def _handle_message(text):
             set_profile("onboarding_step", "0")
             return "Welcome to KPLC Sentinel! Let's set up your household.\n" + ONBOARDING_QUESTIONS[0][1]
         return "You're already set up! Forward a KPLC SMS or type your meter reading."
-
-    # --- KPLC SMS parsing ---
-    parsed = parse_kplc_sms(text)
-    if parsed["success"]:
-        if not add_purchase(parsed["token"], parsed["units"], parsed["amount"], text):
-            return f"Token {parsed['token']} was already recorded. No duplicate added."
-        remaining = predict_blackout()
-        response = f"Got it! Token {parsed['token']} for {parsed['units']} units added."
-        if remaining:
-            response += f" I estimate you have about {remaining:.1f} hours of power left total."
-            response += _household_tip(remaining)
-        return response
 
     # --- Manual reading ---
     try:

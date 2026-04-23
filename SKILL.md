@@ -1,7 +1,7 @@
 ---
 name: kplc-sentinel
 description: Track Kenyan prepaid electricity (KPLC) tokens, predict blackout times, and get proactive low-balance alerts — all through chat.
-version: 1.3.2
+version: 1.3.3
 metadata: {"openclaw":{"emoji":"⚡","requires":{"bins":["python3"]}}}
 ---
 
@@ -12,14 +12,22 @@ Track prepaid electricity for Kenyan households. Parses KPLC token SMS messages,
 ## When to use this skill
 
 Activate this skill when the user's message matches ANY of these:
-- Contains "Token:" and "Units:" (KPLC SMS format)
-- Contains keywords: kplc, stima, token, units, meter, power, electricity, blackout, top up, topup, spending, monthly, yearly, price, tariff, cost, outage, interruption, maintenance
-- Is a forwarded SMS that mentions Kenya Power or KPLC
-- Is a plain number that could be a meter reading (e.g. "42.5", "18.3")
-- User asks about their electricity balance, burn rate, or when power will run out
-- User says "setup", "start", "profile", "household", or "info" in the context of electricity
 
-Do NOT use this skill for general questions unrelated to electricity or KPLC.
+**Auto-detect (no prefix needed):**
+- A forwarded SMS containing "Token:" and "Units:" (KPLC SMS format)
+- A forwarded SMS that mentions Kenya Power or KPLC
+
+**Requires "stima" prefix:**
+All other interactions MUST start with the word "stima". Examples:
+- "stima 42.5" → meter reading
+- "stima balance" → check remaining power
+- "stima spending" → spending dashboard
+- "stima outage" → planned outage check
+- "stima setup" → household onboarding
+- "stima monthly" / "stima yearly" → reports
+- "stima profile" → show household info
+
+If a message does NOT start with "stima" and is NOT a forwarded KPLC SMS, do NOT activate this skill. This prevents the skill from responding to unrelated conversations.
 
 ## How to use
 
