@@ -1,6 +1,6 @@
 import sys
 import sqlite3
-from init_db import init_db
+from init_db import init_db, get_db
 from parser import parse_kplc_sms
 from logic import (
     add_purchase, add_reading, predict_blackout,
@@ -9,17 +9,33 @@ from logic import (
     set_budget, check_budget, estimate_days, comparison_insights
 )
 
-try:
-    init_db()
-except sqlite3.Error as e:
-    print(f"Database error during startup: {e}")
-    sys.exit(1)
-
 ONBOARDING_QUESTIONS = [
     ("occupants", "How many people live in your household?"),
     ("area", "What area/estate do you live in? (e.g. Kilimani, Umoja, Kitengela)"),
     ("appliances", "List your main electric appliances (e.g. fridge, TV, iron, water heater):"),
 ]
+
+# Command routing: prefix → handler.  Checked with startswith() so order matters
+# (longer/more-specific prefixes first where needed).
+_COMMANDS = None
+
+def _get_commands():
+    global _COMMANDS
+    if _COMMANDS is None:
+        _COMMANDS = [
+            (("setup", "start", "hello", "hi", "hey"), _cmd_setup),
+            (("budget",), _cmd_budget),
+            (("insight", "compare", "pattern"), _cmd_insights),
+            (("monthly", "this month"), _cmd_monthly),
+            (("yearly", "this year", "annual"), _cmd_yearly),
+            (("spending", "spend"), _cmd_spending),
+            (("price", "tariff"), _cmd_price),
+            (("outage", "interruption", "maintenance"), _cmd_outage),
+            (("balance", "power", "units"), _cmd_balance),
+            (("profile", "household", "info"), _cmd_profile),
+        ]
+    return _COMMANDS
+
 
 def handle_message(text):
     try:
@@ -27,8 +43,12 @@ def handle_message(text):
     except sqlite3.Error as e:
         return f"Something went wrong with the database: {e}. Try again shortly."
 
+
+MAX_INPUT_LEN = 5000
+MAX_PROFILE_LEN = 200
+
 def _handle_message(text):
-    text = text.strip()
+    text = text.strip()[:MAX_INPUT_LEN]
 
     # Auto-detect forwarded KPLC SMS (no prefix needed)
     parsed = parse_kplc_sms(text)
@@ -61,114 +81,145 @@ def _handle_message(text):
 
     # --- Onboarding flow ---
     if pending is not None:
-        step = int(pending)
-        if step < len(ONBOARDING_QUESTIONS):
-            key = ONBOARDING_QUESTIONS[step][0]
-            set_profile(key, text)
-            step += 1
-            if step < len(ONBOARDING_QUESTIONS):
-                set_profile("onboarding_step", str(step))
-                return ONBOARDING_QUESTIONS[step][1]
-            else:
-                set_profile("onboarding_step", None)
-                profile = get_all_profile()
-                return (
-                    f"Nice! {profile.get('occupants')} people in {profile.get('area', 'your area')}, appliances: {profile.get('appliances')}. "
-                    "I'll factor that into your estimates and watch for outages in your area. Now forward me your last KPLC token SMS or type your meter reading."
-                )
+        return _handle_onboarding(pending, text)
 
-    # Start onboarding if not done
-    if lower in ("start", "setup", "hello", "hi", "hey"):
-        if not is_onboarded():
-            set_profile("onboarding_step", "0")
-            return "Niaje! Welcome to KPLC Sentinel! Let's set up your household.\n" + ONBOARDING_QUESTIONS[0][1]
-        return "Uko set up already! Forward a KPLC SMS or type your meter reading."
-
-    # --- Manual reading ---
+    # --- Manual reading (plain number) ---
     try:
         balance = float(text)
-        if balance < 0:
-            return "Balance can't be negative. Check your meter and try again."
-        add_reading(balance, "Manual entry")
-        remaining = predict_blackout()
-        response = f"Sawa, reading ya {balance} units imesave."
-        if remaining:
-            response += f" Kwa rate yako, stima itaisha in {remaining:.1f} hours."
-            response += _household_tip(remaining)
-        return response
+        return _cmd_reading(balance)
     except ValueError:
         pass
 
-    # --- Budget ---
-    if lower.startswith("budget"):
-        parts = text.split()
-        if len(parts) >= 2:
-            try:
-                amt = float(parts[1].replace(",", ""))
-                set_budget(amt)
-                return f"Sawa! Monthly budget set to KES {amt:,.0f}. I'll warn you when you're getting close."
-            except ValueError:
-                pass
-        return check_budget() or "Set a budget with: stima budget 3000"
-
-    # --- Insights ---
-    if any(w in lower for w in ("insight", "compare", "pattern", "trend")):
-        insights = comparison_insights()
-        return insights or "Bado hakuna enough data for insights. Keep sending readings!"
-
-    # --- Spending & price queries ---
-    if any(w in lower for w in ("monthly", "this month", "month spending")):
-        return monthly_summary()
-    if any(w in lower for w in ("yearly", "this year", "year spending", "annual")):
-        return yearly_summary()
-    if any(w in lower for w in ("spending", "spend", "cost", "how much have i")):
-        return monthly_summary() + "\n\n" + price_trend()
-    if any(w in lower for w in ("price", "tariff", "rate change", "increase", "decrease")):
-        return price_trend()
-
-    # --- Outage queries ---
-    if any(w in lower for w in ("outage", "interruption", "maintenance", "scheduled", "blackout planned")):
-        return check_outages()
-
-    # --- General query ---
-    if any(w in lower for w in ("token", "power", "balance", "stima", "units")):
-        remaining = predict_blackout()
-        if remaining:
-            return f"Stima yako iko na roughly {remaining:.1f} hours remaining." + _household_tip(remaining)
-        return "Bado sina enough data. Send me a meter reading (press 20# kwa meter) or forward your last KPLC SMS."
-
-    if lower in ("profile", "household", "info"):
-        profile = get_all_profile()
-        if not profile:
-            return "Huna profile bado. Type 'stima setup' to get started."
-        budget_msg = check_budget()
-        resp = f"Household: {profile.get('occupants', '?')} people in {profile.get('area', '?')}, appliances: {profile.get('appliances', '?')}"
-        if budget_msg:
-            resp += f"\n{budget_msg}"
-        return resp
+    # --- Command routing: match first word(s) against known prefixes ---
+    for prefixes, handler in _get_commands():
+        if any(lower == p or lower.startswith(p + " ") for p in prefixes):
+            return handler(text, lower)
 
     return None  # Not handled by this skill
 
 
+# ── command handlers ─────────────────────────────────────────────────────
+
+def _handle_onboarding(pending, text):
+    step = int(pending)
+    if step < len(ONBOARDING_QUESTIONS):
+        key = ONBOARDING_QUESTIONS[step][0]
+        set_profile(key, text[:MAX_PROFILE_LEN])
+        step += 1
+        if step < len(ONBOARDING_QUESTIONS):
+            set_profile("onboarding_step", str(step))
+            return ONBOARDING_QUESTIONS[step][1]
+        else:
+            set_profile("onboarding_step", None)
+            profile = get_all_profile()
+            return (
+                f"Nice! {profile.get('occupants')} people in {profile.get('area', 'your area')}, "
+                f"appliances: {profile.get('appliances')}. "
+                "I'll factor that into your estimates and watch for outages in your area. "
+                "Now forward me your last KPLC token SMS or type your meter reading."
+            )
+
+
+def _cmd_reading(balance):
+    if balance < 0:
+        return "Balance can't be negative. Check your meter and try again."
+    try:
+        add_reading(balance, "Manual entry")
+    except ValueError as e:
+        return str(e)
+    remaining = predict_blackout()
+    response = f"Sawa, reading ya {balance} units imesave."
+    if remaining:
+        response += f" Kwa rate yako, stima itaisha in {remaining:.1f} hours."
+        response += _household_tip(remaining)
+    return response
+
+
+def _cmd_setup(text, lower):
+    if not is_onboarded():
+        set_profile("onboarding_step", "0")
+        return "Niaje! Welcome to KPLC Sentinel! Let's set up your household.\n" + ONBOARDING_QUESTIONS[0][1]
+    return "Uko set up already! Forward a KPLC SMS or type your meter reading."
+
+
+def _cmd_budget(text, lower):
+    parts = text.split()
+    if len(parts) >= 2:
+        try:
+            amt = float(parts[1].replace(",", ""))
+            set_budget(amt)
+            return f"Sawa! Monthly budget set to KES {amt:,.0f}. I'll warn you when you're getting close."
+        except ValueError:
+            pass
+    return check_budget() or "Set a budget with: stima budget 3000"
+
+
+def _cmd_insights(text, lower):
+    return comparison_insights() or "Bado hakuna enough data for insights. Keep sending readings!"
+
+
+def _cmd_monthly(text, lower):
+    return monthly_summary()
+
+
+def _cmd_yearly(text, lower):
+    return yearly_summary()
+
+
+def _cmd_spending(text, lower):
+    return monthly_summary() + "\n\n" + price_trend()
+
+
+def _cmd_price(text, lower):
+    return price_trend()
+
+
+def _cmd_outage(text, lower):
+    return check_outages()
+
+
+def _cmd_balance(text, lower):
+    remaining = predict_blackout()
+    if remaining:
+        return f"Stima yako iko na roughly {remaining:.1f} hours remaining." + _household_tip(remaining)
+    return "Bado sina enough data. Send me a meter reading (press 20# kwa meter) or forward your last KPLC SMS."
+
+
+def _cmd_profile(text, lower):
+    profile = get_all_profile()
+    if not profile:
+        return "Huna profile bado. Type 'stima setup' to get started."
+    budget_msg = check_budget()
+    resp = f"Household: {profile.get('occupants', '?')} people in {profile.get('area', '?')}, appliances: {profile.get('appliances', '?')}"
+    if budget_msg:
+        resp += f"\n{budget_msg}"
+    return resp
+
+
+# ── helpers ──────────────────────────────────────────────────────────────
+
+_HEAVY_APPLIANCES = {"heater", "iron", "oven", "geyser", "water heater", "boiler"}
+
 def _household_tip(hours_remaining):
     """Add a contextual tip based on household profile and urgency."""
-    occupants = get_profile("occupants")
-    appliances = get_profile("appliances")
-    if not occupants:
+    if hours_remaining >= 12:
         return ""
-    if hours_remaining < 12 and appliances:
-        heavy = [a.strip() for a in appliances.split(",") if any(
-            h in a.lower() for h in ("heater", "iron", "oven", "geyser")
-        )]
-        if heavy:
-            return f" Tip: avoid running {', '.join(heavy)} to stretch your units."
+    appliances = get_profile("appliances")
+    if not appliances:
+        return ""
+    # Normalize: split on commas, slashes, "and", or multiple spaces
+    import re
+    items = [a.strip().lower() for a in re.split(r'[,/]|\band\b', appliances) if a.strip()]
+    heavy = [a for a in items if any(h in a for h in _HEAVY_APPLIANCES)]
+    if heavy:
+        return f" Tip: avoid running {', '.join(heavy)} to stretch your units."
     return ""
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        msg = " ".join(sys.argv[1:])
-    else:
-        msg = sys.stdin.read().strip()
+    init_db()
+    msg = sys.stdin.read().strip()
     if msg:
-        print(handle_message(msg))
+        result = handle_message(msg)
+        if result:
+            print(result)

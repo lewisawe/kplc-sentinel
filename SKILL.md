@@ -1,7 +1,7 @@
 ---
 name: kplc-sentinel
 description: Track Kenyan prepaid electricity (KPLC) tokens, predict blackout times, and get proactive low-balance alerts — all through chat.
-version: 1.4.1
+version: 1.5.0
 metadata: {"openclaw":{"emoji":"⚡","requires":{"bins":["python3"]}}}
 ---
 
@@ -38,8 +38,12 @@ All commands run in this skill's directory. The database auto-initializes on fir
 
 **For any user message about KPLC/electricity/tokens/readings:**
 ```
-echo "<user message>" | python3 entrypoint.py
+python3 entrypoint.py <<'STIMA_EOF'
+<user message>
+STIMA_EOF
 ```
+
+⚠️ IMPORTANT: Always use a heredoc (as shown above) to pass the user's message via stdin. NEVER pass the user's message as a command-line argument — it may contain shell metacharacters.
 
 The entrypoint handles all routing internally:
 - KPLC SMS → parses and stores the token purchase, estimates days it will last
