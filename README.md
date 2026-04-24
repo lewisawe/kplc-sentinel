@@ -6,7 +6,7 @@ An OpenClaw skill that tracks prepaid electricity for Kenyan households. Parses 
 
 - OpenClaw installed and running (`npm install -g openclaw@latest`)
 - A connected messaging channel (WhatsApp, Telegram, etc.)
-- Python 3 with `pdfplumber` (`pip install pdfplumber`)
+- Python 3 with `pdfplumber` (`pip install -r requirements.txt`)
 - An LLM API key (Anthropic, OpenAI, Google Gemini, etc.)
 
 ## Install
@@ -38,8 +38,8 @@ openclaw channels login --channel whatsapp
 # Install the skill
 openclaw skills install kplc-sentinel
 
-# Install Python dependency for outage PDF parsing
-pip install pdfplumber
+# Install Python dependencies
+pip install -r requirements.txt
 
 # Start the gateway
 openclaw gateway
@@ -79,7 +79,7 @@ Token: 9876-5432-1098 Units: 15.2 Amt: 500.0
 
 ## How it works
 
-The skill stores all data in a local SQLite database. Nothing leaves your machine.
+The skill stores all data in a local SQLite database. Nothing leaves your machine except a single HTTPS request to `kplc.co.ke` to fetch the planned outage PDF.
 
 - **Burn rate:** Weighted average across all meter readings, with exponential decay so recent usage matters more
 - **Blackout prediction:** Current balance divided by burn rate
@@ -110,3 +110,4 @@ The skill checks automatically via OpenClaw's heartbeat system:
 | `logic.py` | Burn rate, predictions, spending, outage parsing |
 | `parser.py` | KPLC SMS regex parser |
 | `init_db.py` | SQLite schema |
+| `requirements.txt` | Python dependencies |
