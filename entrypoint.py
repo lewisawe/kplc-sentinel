@@ -168,4 +168,7 @@ def _household_tip(hours_remaining):
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         msg = " ".join(sys.argv[1:])
+    else:
+        msg = sys.stdin.read().strip()
+    if msg:
         print(handle_message(msg))
