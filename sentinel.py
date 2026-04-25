@@ -11,7 +11,7 @@ def check_status():
 
     with get_db() as conn:
         last_reading = conn.execute(
-            "SELECT balance, timestamp FROM readings ORDER BY timestamp DESC LIMIT 1"
+            "SELECT balance, timestamp FROM readings ORDER BY id DESC LIMIT 1"
         ).fetchone()
 
     alerts = []

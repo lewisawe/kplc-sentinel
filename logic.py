@@ -39,7 +39,7 @@ def add_purchase(token, units, amount, raw_text):
             return False  # duplicate token
 
         # Update balance: add purchased units to the latest reading
-        c.execute("SELECT balance FROM readings ORDER BY timestamp DESC LIMIT 1")
+        c.execute("SELECT balance FROM readings ORDER BY id DESC LIMIT 1")
         row = c.fetchone()
         new_balance = (row[0] if row else 0) + units
         c.execute(
@@ -58,7 +58,7 @@ def add_reading(balance, notes=None):
 
     with get_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT balance, timestamp FROM readings ORDER BY timestamp DESC LIMIT 1")
+        c.execute("SELECT balance, timestamp FROM readings ORDER BY id DESC LIMIT 1")
         last = c.fetchone()
         if last:
             elapsed = (datetime.now() - datetime.strptime(last[1], "%Y-%m-%d %H:%M:%S")).total_seconds()
@@ -184,7 +184,7 @@ def predict_blackout():
         return None
     with get_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT balance FROM readings ORDER BY timestamp DESC LIMIT 1")
+        c.execute("SELECT balance FROM readings ORDER BY id DESC LIMIT 1")
         row = c.fetchone()
     if not row:
         return None
