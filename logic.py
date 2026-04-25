@@ -112,10 +112,74 @@ def calculate_burn_rate():
     return weighted / total_w
 
 
+# ── appliance estimates ───────────────────────────────────────────────────
+
+# Average consumption for common Kenyan household appliances
+# (watts, typical_hours_per_day) — accounts for actual usage patterns
+_APPLIANCE_WATTS_HOURS = {
+    "fridge": (150, 24),        # runs continuously (compressor cycles)
+    "refrigerator": (150, 24),
+    "freezer": (200, 24),
+    "tv": (100, 5),             # ~5 hours evening viewing
+    "television": (100, 5),
+    "iron": (1000, 0.15),       # ~10 min a few times a week → avg/day
+    "pressing iron": (1000, 0.15),
+    "heater": (3000, 0.08),     # ~5 min/day
+    "water heater": (3000, 0.08),
+    "geyser": (3000, 0.08),
+    "boiler": (3000, 0.08),
+    "shower": (3500, 0.08),     # instant shower, ~5 min
+    "oven": (2000, 0.3),        # ~20 min/day
+    "microwave": (1000, 0.1),   # ~6 min/day
+    "washing machine": (500, 0.3),  # ~2 loads/week → avg/day
+    "washer": (500, 0.3),
+    "kettle": (1500, 0.08),     # ~5 min/day, 2-3 boils
+    "electric kettle": (1500, 0.08),
+    "fan": (60, 8),
+    "ac": (1500, 6),
+    "air conditioner": (1500, 6),
+    "bulb": (10, 6),            # LED bulb
+    "light": (10, 6),
+    "lighting": (40, 6),        # ~4 bulbs
+    "laptop": (60, 5),
+    "computer": (200, 4),
+    "pc": (200, 4),
+    "router": (10, 24),
+    "wifi": (10, 24),
+    "phone charger": (10, 2),
+    "charger": (10, 2),
+}
+
+
+def estimate_appliance_burn_rate():
+    """Estimate units/hour from the user's appliance list when no readings exist."""
+    appliances = get_profile("appliances")
+    if not appliances:
+        return None
+    items = [a.strip().lower() for a in re.split(r'[,/]|\band\b', appliances) if a.strip()]
+    total_kwh = 0.0
+    for item in items:
+        for name, (watts, hours) in _APPLIANCE_WATTS_HOURS.items():
+            if name in item:
+                total_kwh += (watts * hours) / 1000  # Wh → kWh per day
+                break
+    if total_kwh == 0:
+        return None
+    # Scale by occupants (more people = slightly more usage)
+    occ = get_profile("occupants")
+    if occ:
+        try:
+            n = max(1, int(occ))
+            total_kwh *= min(1.0 + (n - 1) * 0.1, 2.0)  # +10% per extra person, cap 2x
+        except ValueError:
+            pass
+    return total_kwh / 24  # convert kWh/day to kWh/hour (≈ units/hour)
+
+
 # ── predictions ──────────────────────────────────────────────────────────
 
 def predict_blackout():
-    burn_rate = calculate_burn_rate()
+    burn_rate = calculate_burn_rate() or estimate_appliance_burn_rate()
     if not burn_rate:
         return None
     with get_db() as conn:
@@ -128,7 +192,7 @@ def predict_blackout():
 
 
 def estimate_days(units):
-    burn_rate = calculate_burn_rate()
+    burn_rate = calculate_burn_rate() or estimate_appliance_burn_rate()
     if not burn_rate:
         return None
     return units / (burn_rate * 24)
@@ -136,7 +200,7 @@ def estimate_days(units):
 
 # ── profile ──────────────────────────────────────────────────────────────
 
-_INTERNAL_KEYS = {"onboarding_step"}
+_INTERNAL_KEYS = {"onboarding_step", "menu_pending"}
 
 
 def set_profile(key, value):
@@ -161,6 +225,12 @@ def get_all_profile():
 
 def is_onboarded():
     return get_profile("occupants") is not None
+
+
+def reset_profile():
+    """Clear all profile data to allow re-onboarding."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM profile")
 
 
 # ── budget ───────────────────────────────────────────────────────────────
@@ -304,12 +374,23 @@ def _fetch_outage_schedule():
 
     try:
         pdf_path = os.path.join(tempfile.gettempdir(), "kplc_schedule.pdf")
-        req = urllib.request.Request(KPLC_SCHEDULE_URL, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        })
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            with open(pdf_path, "wb") as f:
-                f.write(resp.read())
+
+        # Cache: skip download if PDF is less than 1 hour old
+        use_cache = False
+        if os.path.exists(pdf_path):
+            age = datetime.now().timestamp() - os.path.getmtime(pdf_path)
+            use_cache = age < 3600
+
+        if not use_cache:
+            req = urllib.request.Request(KPLC_SCHEDULE_URL, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            })
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                with tempfile.NamedTemporaryFile(dir=tempfile.gettempdir(), suffix=".pdf", delete=False) as tmp:
+                    tmp.write(resp.read())
+                    tmp_path = tmp.name
+            os.replace(tmp_path, pdf_path)
+            os.chmod(pdf_path, 0o600)
 
         chunks = []
         with pdfplumber.open(pdf_path) as pdf:
@@ -360,9 +441,9 @@ def check_outages(area=None):
     ]
 
     if not matches:
-        return f"No planned outages for {area} this week. You're clear!"
+        return f"No planned outages for {re.sub(r'[*_~`<>]', '', area)} this week. You're clear!"
 
-    lines = [f"⚠️ *Planned outages near {area}:*", ""]
+    lines = [f"⚠️ *Planned outages near {re.sub(r'[*_~`<>]', '', area)}:*", ""]
     for m in matches:
         lines.append(f"📅 {m['date']}, {m['time']}")
         lines.append("")
@@ -406,6 +487,8 @@ def comparison_insights():
         lines.append(f"This week: {this_units:.0f} units (KES {this_spent:,.0f}). No last week data to compare.")
 
     # Day-of-week patterns — compute from actual timestamps, skip auto readings
+    # NOTE: attributes all burned units to the end reading's day, which skews
+    # if readings span multiple days.  Acceptable for frequent-reading users.
     fmt = "%Y-%m-%d %H:%M:%S"
     if len(readings) >= 7:
         day_usage = {}

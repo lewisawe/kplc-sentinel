@@ -14,7 +14,8 @@ def parse_kplc_sms(text):
     amount_match = re.search(amount_pattern, text, re.IGNORECASE)
 
     if token_match and units_match:
-        token = token_match.group(1).replace("-", "")
+        token_raw = token_match.group(1)
+        token = token_raw.replace("-", "")
         units = float(units_match.group(1))
         
         # Amount is sometimes formatted with commas or missing entirely in some alerts
@@ -28,6 +29,7 @@ def parse_kplc_sms(text):
                 
         return {
             "token": token,
+            "token_display": token_raw,
             "units": units,
             "amount": amount,
             "success": True
@@ -38,6 +40,7 @@ def parse_kplc_sms(text):
     if alt:
         return {
             "token": alt.group(1).replace("-", ""),
+            "token_display": alt.group(1),
             "units": float(alt.group(2)),
             "amount": 0.0,
             "success": True

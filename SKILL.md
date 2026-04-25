@@ -1,13 +1,20 @@
 ---
 name: kplc-sentinel
 description: Track Kenyan prepaid electricity (KPLC) tokens, predict blackout times, and get proactive low-balance alerts — all through chat.
-version: 1.5.0
+version: 1.6.0
 metadata: {"openclaw":{"emoji":"⚡","requires":{"bins":["python3"]}}}
 ---
 
 # KPLC Token Sentinel
 
 Track prepaid electricity for Kenyan households. Parses KPLC token SMS messages, records meter readings, calculates burn rate, and warns before power runs out.
+
+## Setup
+
+Install Python dependencies (one-time):
+```
+pip install -r {baseDir}/requirements.txt
+```
 
 ## When to use this skill
 
@@ -19,6 +26,8 @@ Activate this skill when the user's message matches ANY of these:
 
 **Requires "stima" prefix:**
 All other interactions MUST start with the word "stima". Examples:
+- "stima" → show interactive menu
+- "stima help" / "stima menu" → show interactive menu
 - "stima 42.5" → meter reading
 - "stima balance" → check remaining power
 - "stima spending" → spending dashboard
@@ -28,17 +37,19 @@ All other interactions MUST start with the word "stima". Examples:
 - "stima budget" → check budget status
 - "stima insights" → week-over-week comparison and day patterns
 - "stima monthly" / "stima yearly" → reports
+- "stima price" → cost-per-unit trend
 - "stima profile" → show household info
+- "stima reset" → clear profile and re-onboard
 
 If a message does NOT start with "stima" and is NOT a forwarded KPLC SMS, do NOT activate this skill. This prevents the skill from responding to unrelated conversations.
 
 ## How to use
 
-All commands run in this skill's directory. The database auto-initializes on first run.
+The database auto-initializes on first run.
 
 **For any user message about KPLC/electricity/tokens/readings:**
 ```
-python3 entrypoint.py <<'STIMA_EOF'
+python3 {baseDir}/entrypoint.py <<'STIMA_EOF'
 <user message>
 STIMA_EOF
 ```
@@ -48,6 +59,7 @@ STIMA_EOF
 The entrypoint handles all routing internally:
 - KPLC SMS → parses and stores the token purchase, estimates days it will last
 - Plain number → records as a meter reading
+- Just "stima" or "stima help" → shows numbered menu (user can reply with a number)
 - "budget <amount>" → sets monthly budget; "budget" alone → checks status
 - "insights"/"compare" → week-over-week and day-of-week patterns
 - "monthly"/"yearly"/"spending" → spending dashboards
@@ -55,13 +67,16 @@ The entrypoint handles all routing internally:
 - "outage"/"interruption"/"maintenance" → planned outage alerts for user's area
 - Keywords (balance, stima, power, units) → returns current estimate
 - "setup"/"hi"/"hello" → starts household onboarding
+- "reset"/"clear" → clears profile and restarts onboarding
 - "profile"/"household"/"info" → shows household profile and budget
+
+When no meter readings exist yet, predictions use appliance-based estimates from the user's profile.
 
 **Return the output directly to the user.** If the output is `None`, the message wasn't handled — let the agent respond normally.
 
 **For heartbeat checks (see HEARTBEAT.md):**
 ```
-python3 sentinel.py
+python3 {baseDir}/sentinel.py
 ```
 
 ## Example KPLC SMS formats

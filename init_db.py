@@ -5,9 +5,15 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "kplc.sqlite")
 
 def get_db():
     """Return a connection usable as a context manager."""
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
 
 def init_db():
+    # Restrict DB file to owner-only before first write
+    if not os.path.exists(DB_PATH):
+        fd = os.open(DB_PATH, os.O_CREAT | os.O_WRONLY, 0o600)
+        os.close(fd)
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''

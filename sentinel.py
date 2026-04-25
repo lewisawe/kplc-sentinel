@@ -65,6 +65,8 @@ def weekly_summary():
     units_consumed = None
     if len(readings) >= 2:
         units_consumed = (readings[0][1] + units_bought) - readings[-1][1]
+        if units_consumed < 0:
+            units_consumed = None  # purchase timing skew — fall back to burn rate
 
     burn_rate = calculate_burn_rate()
 

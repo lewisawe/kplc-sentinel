@@ -45,13 +45,15 @@ pip install -r requirements.txt
 openclaw gateway
 ```
 
-Message your OpenClaw agent on WhatsApp and say "stima hi" to start onboarding.
+Message your OpenClaw agent on WhatsApp and say "stima" to see the menu, or "stima setup" to start onboarding.
 
 ## Usage
 
 All commands use the `stima` prefix to prevent the skill from responding to unrelated conversations. Forwarded KPLC SMS messages are auto-detected without a prefix.
 
-**Onboarding:** Say "stima hi" or "stima setup". The skill asks for your household size, area/estate, and appliances.
+**Menu:** Type "stima" to see a numbered menu of all commands. Reply with a number to select.
+
+**Onboarding:** Say "stima setup". The skill asks for your household size, area/estate, and appliances. Your appliance list is used to estimate consumption even before you have any meter readings.
 
 **Track a token purchase:** Forward your KPLC SMS to the chat. The skill parses the token, units, and amount automatically, and estimates how many days it will last.
 
@@ -77,18 +79,34 @@ Token: 9876-5432-1098 Units: 15.2 Amt: 500.0
 
 **Profile:** "stima profile" to see household info and budget status.
 
+**Reset:** "stima reset" to clear your profile and re-onboard (e.g. if you move house or change appliances).
+
+**Help:** "stima help" or "stima menu" to see all commands.
+
 ## How it works
 
-The skill stores all data in a local SQLite database. Nothing leaves your machine except a single HTTPS request to `kplc.co.ke` to fetch the planned outage PDF.
+The skill stores all data in a local SQLite database. Nothing leaves your machine except a single HTTPS request to `kplc.co.ke` to fetch the planned outage PDF (cached for 1 hour).
 
 - **Burn rate:** Weighted average across all meter readings, with exponential decay so recent usage matters more
-- **Blackout prediction:** Current balance divided by burn rate
-- **Token-to-days:** Estimates how long a new purchase will last based on burn rate
+- **Appliance estimates:** When no meter readings exist yet, the skill estimates consumption from your appliance list (fridge, TV, heater, etc.) scaled by household size — so you get useful predictions from day one
+- **Blackout prediction:** Current balance divided by burn rate (or appliance estimate)
+- **Token-to-days:** Estimates how long a new purchase will last
 - **Budget tracking:** Set a monthly KES limit, warns at 80% and 100%
 - **Usage insights:** Week-over-week comparison and heaviest/lightest day detection
 - **Household tips:** When balance is low, suggests turning off heavy appliances from your profile
 - **Outage alerts:** Downloads and parses KPLC's two-column maintenance PDF, matches against your area
 - **Price trends:** Tracks cost-per-unit across months, shows percentage changes
+
+## Security
+
+- All SQL queries use parameterized statements (no injection)
+- User input passed via stdin heredoc (no shell injection)
+- Input length capped at 5000 characters
+- Profile values sanitized before display (no chat injection)
+- Database file created with owner-only permissions (0600)
+- Outbound requests locked to `kplc.co.ke` HTTPS only
+- No credentials stored in code
+- Error messages don't leak internal details
 
 ## Heartbeat (proactive alerts)
 
@@ -105,9 +123,9 @@ The skill checks automatically via OpenClaw's heartbeat system:
 | `SKILL.md` | Skill metadata and agent routing instructions |
 | `SOUL.md` | Agent persona ("Stima") |
 | `HEARTBEAT.md` | Scheduled proactive checks |
-| `entrypoint.py` | Message handler |
+| `entrypoint.py` | Message handler and command routing |
 | `sentinel.py` | Heartbeat alerts and weekly summary |
-| `logic.py` | Burn rate, predictions, spending, outage parsing |
+| `logic.py` | Burn rate, predictions, appliance estimates, spending, outage parsing |
 | `parser.py` | KPLC SMS regex parser |
-| `init_db.py` | SQLite schema |
+| `init_db.py` | SQLite schema and connection management |
 | `requirements.txt` | Python dependencies |
