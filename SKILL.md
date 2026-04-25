@@ -1,7 +1,7 @@
 ---
 name: kplc-sentinel
 description: Track Kenyan prepaid electricity (KPLC) tokens, predict blackout times, and get proactive low-balance alerts — all through chat.
-version: 1.6.0
+version: 1.7.0
 metadata: {"openclaw":{"emoji":"⚡","requires":{"bins":["python3"]}}}
 ---
 
@@ -41,7 +41,7 @@ All other interactions MUST start with the word "stima". Examples:
 - "stima profile" → show household info
 - "stima reset" → clear profile and re-onboard
 
-If a message does NOT start with "stima" and is NOT a forwarded KPLC SMS, do NOT activate this skill. This prevents the skill from responding to unrelated conversations.
+If a message does NOT start with "stima" and is NOT a forwarded KPLC SMS, do NOT activate this skill.
 
 ## How to use
 
@@ -56,23 +56,31 @@ STIMA_EOF
 
 ⚠️ IMPORTANT: Always use a heredoc (as shown above) to pass the user's message via stdin. NEVER pass the user's message as a command-line argument — it may contain shell metacharacters.
 
-The entrypoint handles all routing internally:
-- KPLC SMS → parses and stores the token purchase, estimates days it will last
-- Plain number → records as a meter reading
-- Just "stima" or "stima help" → shows numbered menu (user can reply with a number)
-- "budget <amount>" → sets monthly budget; "budget" alone → checks status
-- "insights"/"compare" → week-over-week and day-of-week patterns
-- "monthly"/"yearly"/"spending" → spending dashboards
-- "price"/"tariff"/"increase" → price-per-unit trend analysis
-- "outage"/"interruption"/"maintenance" → planned outage alerts for user's area
-- Keywords (balance, stima, power, units) → returns current estimate
-- "setup"/"hi"/"hello" → starts household onboarding
-- "reset"/"clear" → clears profile and restarts onboarding
-- "profile"/"household"/"info" → shows household profile and budget
+## Output format
 
-When no meter readings exist yet, predictions use appliance-based estimates from the user's profile.
+The entrypoint outputs **JSON**. Do NOT return the raw JSON to the user. Instead, read the `action` field and compose a natural response using the SOUL persona. Key actions:
 
-**Return the output directly to the user.** If the output is `None`, the message wasn't handled — let the agent respond normally.
+- `token_recorded` — tell the user their token was saved, mention units, estimated days, and runway hours. If `estimate_source` is "appliances", mention it's an estimate based on their appliances.
+- `duplicate_token` — token was already recorded, no duplicate added.
+- `reading_recorded` — meter reading saved. Mention runway hours if available.
+- `balance` — report remaining hours. If `tip` is present, include the energy-saving tip.
+- `menu` — present the numbered options list to the user.
+- `onboarding_prompt` — ask the user the question in the `question` field. If `welcome` is true, greet them first.
+- `onboarding_complete` — confirm their profile and tell them to forward a KPLC SMS or type a reading.
+- `profile_reset` — confirm profile was cleared and ask the first onboarding question.
+- `budget_set` — confirm the budget amount was set.
+- `budget_status` — report spent vs budget and percentage.
+- `no_budget` — tell the user to set a budget with "stima budget <amount>".
+- `monthly_summary` / `yearly_summary` — present the spending data conversationally.
+- `spending` — combine monthly summary and price trend data.
+- `price_trend` — present cost-per-unit over time, highlight changes.
+- `outage_check` — if matches exist, warn about planned outages. If none, say they're clear. Handle `error` field (no_area, fetch_failed).
+- `insights` — present week-over-week comparison and day patterns.
+- `no_data` — not enough data yet for the requested feature.
+- `no_profile` — tell the user to run "stima setup".
+- `error` — something went wrong, ask them to try again.
+
+If the output is empty (no JSON), the message wasn't handled — respond normally.
 
 **For heartbeat checks (see HEARTBEAT.md):**
 ```
@@ -83,7 +91,3 @@ python3 {baseDir}/sentinel.py
 
 - "Accept Token: 1234-5678-9012-3456-7890 Units: 34.5 Amount: 1000.00"
 - "Token: 9876-5432-1098 Units: 15.2 Amt: 500.0"
-
-## Future
-
-- OCR support for KPLC SMS screenshots (pending vision API)

@@ -1,3 +1,4 @@
+import json
 import sys
 import logging
 import sqlite3
@@ -6,10 +7,10 @@ from init_db import init_db, get_db
 logger = logging.getLogger(__name__)
 from parser import parse_kplc_sms
 from logic import (
-    add_purchase, add_reading, predict_blackout,
+    add_purchase, add_reading, predict_blackout, calculate_burn_rate,
     set_profile, get_profile, get_all_profile, is_onboarded, reset_profile,
-    monthly_summary, yearly_summary, price_trend, check_outages,
-    set_budget, check_budget, estimate_days, comparison_insights
+    monthly_summary, yearly_summary, price_trend_data, check_outages,
+    set_budget, budget_data, estimate_days, comparison_insights_data
 )
 
 MENU_OPTIONS = [
@@ -31,8 +32,6 @@ ONBOARDING_QUESTIONS = [
     ("appliances", "List your main electric appliances (e.g. fridge, TV, iron, water heater):"),
 ]
 
-# Command routing: prefix → handler.  Checked with startswith() so order matters
-# (longer/more-specific prefixes first where needed).
 _COMMANDS = None
 
 def _get_commands():
@@ -60,7 +59,7 @@ def handle_message(text):
         return _handle_message(text)
     except sqlite3.Error:
         logger.exception("Database error")
-        return "Something went wrong with the database. Try again shortly."
+        return {"action": "error", "error": "database"}
 
 
 MAX_INPUT_LEN = 5000
@@ -72,44 +71,49 @@ def _handle_message(text):
     # Auto-detect forwarded KPLC SMS (no prefix needed)
     parsed = parse_kplc_sms(text)
     if parsed["success"]:
-        if not add_purchase(parsed["token"], parsed["units"], parsed["amount"], text):
-            return f"Oya! Token {parsed['token_display']} iko already. No duplicate added."
-        remaining = predict_blackout()
+        is_dup = not add_purchase(parsed["token"], parsed["units"], parsed["amount"], text)
+        if is_dup:
+            return {"action": "duplicate_token", "token": parsed["token_display"]}
+        result = {
+            "action": "token_recorded",
+            "token": parsed["token_display"],
+            "units": parsed["units"],
+            "amount": parsed["amount"],
+            "estimate_source": "meter" if calculate_burn_rate() else "appliances",
+        }
         days = estimate_days(parsed["units"])
-        response = f"Sawa! Token {parsed['token_display']} for {parsed['units']} units imeingia."
         if days:
-            from logic import calculate_burn_rate
-            source = "" if calculate_burn_rate() else " (estimated from your appliances)"
-            response += f" Hiyo itakudumu roughly {days:.1f} days{source}."
+            result["estimated_days"] = round(days, 1)
+        remaining = predict_blackout()
         if remaining:
-            response += f" Total runway: ~{remaining:.1f} hours."
-            response += _household_tip(remaining)
-        budget_msg = check_budget()
-        if budget_msg and ("⚠️" in budget_msg or "🚨" in budget_msg):
-            response += f"\n{budget_msg}"
-        return response
+            result["total_runway_hours"] = round(remaining, 1)
+            result["tip"] = _get_tip(remaining)
+        bdata = budget_data()
+        if bdata and bdata["percent"] >= 80:
+            result["budget_warning"] = bdata
+        return result
 
     # All other messages require 'stima' prefix
     lower = text.lower()
     if not lower.startswith("stima"):
-        return None  # Not for this skill
+        return None
 
-    # Strip 'stima' prefix
     text = text[5:].strip()
     lower = text.lower()
 
-    # --- Onboarding flow ---
+    # Onboarding flow
     pending = get_profile("onboarding_step")
     if pending is not None:
         if not text:
-            return "Still setting up! " + ONBOARDING_QUESTIONS[int(pending)][1] if pending.isdigit() and int(pending) < len(ONBOARDING_QUESTIONS) else None
+            if pending.isdigit() and int(pending) < len(ONBOARDING_QUESTIONS):
+                return {"action": "onboarding_prompt", "question": ONBOARDING_QUESTIONS[int(pending)][1]}
+            return None
         return _handle_onboarding(pending, text)
 
-    # --- Empty command = show menu ---
     if not text:
         return _cmd_menu()
 
-    # --- Menu number selection ---
+    # Menu number selection
     if lower.isdigit() and get_profile("menu_pending"):
         choice = int(lower)
         if 1 <= choice <= len(MENU_OPTIONS):
@@ -118,84 +122,76 @@ def _handle_message(text):
             return _handle_message(f"stima {cmd}")
         set_profile("menu_pending", None)
 
-    # --- Manual reading (plain number) ---
+    # Manual reading (plain number)
     try:
         balance = float(text)
         return _cmd_reading(balance)
     except ValueError:
         pass
 
-    # --- Command routing: match first word(s) against known prefixes ---
     for prefixes, handler in _get_commands():
         if any(lower == p or lower.startswith(p + " ") for p in prefixes):
             return handler(text, lower)
 
-    return None  # Not handled by this skill
+    return None
 
 
-# ── command handlers ─────────────────────────────────────────────────────
+# ── handlers ─────────────────────────────────────────────────────────────
 
 def _cmd_menu():
     set_profile("menu_pending", "1")
-    lines = ["⚡ *KPLC Sentinel*", "", "Reply with a number or type a command:", ""]
-    for i, (_, label) in enumerate(MENU_OPTIONS, 1):
-        lines.append(f"  {i}. {label}")
-    lines.append("")
-    lines.append("You can also forward a KPLC SMS or type *stima <reading>*.")
-    return "\n".join(lines)
+    return {
+        "action": "menu",
+        "options": [{"number": i, "label": label} for i, (_, label) in enumerate(MENU_OPTIONS, 1)],
+    }
+
 
 def _handle_onboarding(pending, text):
     try:
         step = int(pending)
     except (ValueError, TypeError):
         set_profile("onboarding_step", None)
-        return "Something went wrong with setup. Type 'stima setup' to start again."
+        return {"action": "onboarding_error"}
     if step < 0 or step >= len(ONBOARDING_QUESTIONS):
         set_profile("onboarding_step", None)
-        return "Something went wrong with setup. Type 'stima setup' to start again."
+        return {"action": "onboarding_error"}
     key = ONBOARDING_QUESTIONS[step][0]
     set_profile(key, text[:MAX_PROFILE_LEN])
     step += 1
     if step < len(ONBOARDING_QUESTIONS):
         set_profile("onboarding_step", str(step))
-        return ONBOARDING_QUESTIONS[step][1]
-    else:
-        set_profile("onboarding_step", None)
-        profile = get_all_profile()
-        return (
-            f"Nice! {_sanitize(profile.get('occupants'))} people in {_sanitize(profile.get('area', 'your area'))}, "
-            f"appliances: {_sanitize(profile.get('appliances'))}. "
-            "I'll factor that into your estimates and watch for outages in your area. "
-            "Now forward me your last KPLC token SMS or type your meter reading."
-        )
+        return {"action": "onboarding_prompt", "question": ONBOARDING_QUESTIONS[step][1]}
+    set_profile("onboarding_step", None)
+    return {"action": "onboarding_complete", "profile": get_all_profile()}
 
 
 def _cmd_reading(balance):
     if balance < 0:
-        return "Balance can't be negative. Check your meter and try again."
+        return {"action": "error", "error": "negative_reading"}
     try:
         add_reading(balance, "Manual entry")
     except ValueError as e:
-        return str(e)
+        return {"action": "error", "error": str(e)}
     remaining = predict_blackout()
-    response = f"Sawa, reading ya {balance} units imesave."
+    result = {"action": "reading_recorded", "balance": balance}
     if remaining:
-        response += f" Kwa rate yako, stima itaisha in {remaining:.1f} hours."
-        response += _household_tip(remaining)
-    return response
+        result["runway_hours"] = round(remaining, 1)
+        result["estimate_source"] = "meter" if calculate_burn_rate() else "appliances"
+        result["tip"] = _get_tip(remaining)
+    return result
 
 
 def _cmd_setup(text, lower):
     if not is_onboarded():
         set_profile("onboarding_step", "0")
-        return "Niaje! Welcome to KPLC Sentinel! Let's set up your household.\n" + ONBOARDING_QUESTIONS[0][1]
-    return "Uko set up already! Forward a KPLC SMS or type your meter reading."
+        return {"action": "onboarding_prompt", "question": ONBOARDING_QUESTIONS[0][1], "welcome": True}
+    return {"action": "already_onboarded"}
 
 
 def _cmd_reset(text, lower):
     reset_profile()
     set_profile("onboarding_step", "0")
-    return "Profile cleared! Let's set up fresh.\n" + ONBOARDING_QUESTIONS[0][1]
+    return {"action": "profile_reset", "question": ONBOARDING_QUESTIONS[0][1]}
 
 
 def _cmd_budget(text, lower):
@@ -204,84 +200,82 @@ def _cmd_budget(text, lower):
         try:
             amt = float(parts[1].replace(",", ""))
             set_budget(amt)
-            return f"Sawa! Monthly budget set to KES {amt:,.0f}. I'll warn you when you're getting close."
+            return {"action": "budget_set", "amount": amt}
         except ValueError:
             pass
-    return check_budget() or "Set a budget with: stima budget 3000"
+    data = budget_data()
+    if data:
+        return {"action": "budget_status", **data}
+    return {"action": "no_budget"}
 
 
 def _cmd_insights(text, lower):
-    return comparison_insights() or "Bado hakuna enough data for insights. Keep sending readings!"
+    data = comparison_insights_data()
+    if data:
+        return {"action": "insights", **data}
+    return {"action": "no_data", "feature": "insights"}
 
 
 def _cmd_monthly(text, lower):
-    return monthly_summary()
+    return {"action": "monthly_summary", **monthly_summary()}
 
 
 def _cmd_yearly(text, lower):
-    return yearly_summary()
+    return {"action": "yearly_summary", **yearly_summary()}
 
 
 def _cmd_spending(text, lower):
-    return monthly_summary() + "\n\n" + price_trend()
+    return {"action": "spending", "monthly": monthly_summary(), "price_trend": price_trend_data()}
 
 
 def _cmd_price(text, lower):
-    return price_trend()
+    data = price_trend_data()
+    if data["months"]:
+        return {"action": "price_trend", **data}
+    return {"action": "no_data", "feature": "price trends"}
 
 
 def _cmd_outage(text, lower):
-    return check_outages()
+    return {"action": "outage_check", **check_outages()}
 
 
 def _cmd_balance(text, lower):
     remaining = predict_blackout()
     if remaining:
-        from logic import calculate_burn_rate
-        source = "" if calculate_burn_rate() else " (estimated from your appliances)"
-        return f"Stima yako iko na roughly {remaining:.1f} hours remaining{source}." + _household_tip(remaining)
-    return "Bado sina enough data. Send me a meter reading (press 20# kwa meter) or forward your last KPLC SMS."
+        return {
+            "action": "balance",
+            "runway_hours": round(remaining, 1),
+            "estimate_source": "meter" if calculate_burn_rate() else "appliances",
+            "tip": _get_tip(remaining),
+        }
+    return {"action": "no_data", "feature": "balance"}
 
 
 def _cmd_profile(text, lower):
     profile = get_all_profile()
     if not profile:
-        return "Huna profile bado. Type 'stima setup' to get started."
-    budget_msg = check_budget()
-    resp = f"Household: {_sanitize(profile.get('occupants', '?'))} people in {_sanitize(profile.get('area', '?'))}, appliances: {_sanitize(profile.get('appliances', '?'))}"
-    if budget_msg:
-        resp += f"\n{budget_msg}"
-    return resp
+        return {"action": "no_profile"}
+    result = {"action": "profile", **profile}
+    data = budget_data()
+    if data:
+        result["budget"] = data
+    return result
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
 
 _HEAVY_APPLIANCES = {"heater", "iron", "oven", "geyser", "water heater", "boiler"}
 
-
-def _sanitize(text):
-    """Strip markdown/HTML formatting to prevent injection via chat channels."""
-    if not text:
-        return text
-    import re
-    text = re.sub(r'[*_~`<>\[\]()]', '', text)
-    # Strip control chars except newline
-    return ''.join(c for c in text if c == '\n' or (c.isprintable() and ord(c) >= 32))
-
-def _household_tip(hours_remaining):
-    """Add a contextual tip based on household profile and urgency."""
+def _get_tip(hours_remaining):
     if hours_remaining >= 12:
-        return ""
+        return None
     appliances = get_profile("appliances")
     if not appliances:
-        return ""
-    # Normalize: split on commas, slashes, "and", or multiple spaces
+        return None
     import re
     items = [a.strip().lower() for a in re.split(r'[,/]|\band\b', appliances) if a.strip()]
     heavy = [a for a in items if any(h in a for h in _HEAVY_APPLIANCES)]
-    if heavy:
-        return f" Tip: avoid running {', '.join(heavy)} to stretch your units."
-    return ""
+    return f"avoid running {', '.join(heavy)}" if heavy else None
 
 
 if __name__ == "__main__":
@@ -290,4 +284,4 @@ if __name__ == "__main__":
     if msg:
         result = handle_message(msg)
         if result:
-            print(result)
+            print(json.dumps(result))

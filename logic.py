@@ -262,6 +262,23 @@ def check_budget():
     return f"💰 Budget: KES {spent:,.0f}/{budget:,.0f} ({pct:.0f}%) used this month."
 
 
+def budget_data():
+    budget_str = get_profile("budget")
+    if not budget_str:
+        return None
+    budget = float(budget_str)
+    now = datetime.now()
+    start = f"{now.year}-{now.month:02d}-01 00:00:00"
+    end = f"{now.year + (now.month // 12)}-{(now.month % 12) + 1:02d}-01 00:00:00"
+    with get_db() as conn:
+        spent = conn.execute(
+            "SELECT COALESCE(SUM(amount),0) FROM purchases WHERE timestamp >= ? AND timestamp < ?",
+            (start, end),
+        ).fetchone()[0]
+    pct = (spent / budget) * 100 if budget > 0 else 0
+    return {"budget": budget, "spent": spent, "percent": round(pct, 0)}
+
+
 # ── summaries ────────────────────────────────────────────────────────────
 
 def monthly_summary(year=None, month=None):
@@ -278,14 +295,11 @@ def monthly_summary(year=None, month=None):
             (start, end),
         ).fetchone()
 
-    month_name = calendar.month_name[month]
-    lines = [f"📅 *{month_name} {year} KPLC Summary*", ""]
-    lines.append(f"Top-ups: {count}")
-    lines.append(f"Units bought: {units:.1f}")
-    lines.append(f"Total spent: KES {spent:,.0f}")
-    if units > 0:
-        lines.append(f"Avg cost/unit: KES {spent / units:.2f}")
-    return "\n".join(lines)
+    return {
+        "month": calendar.month_name[month], "year": year,
+        "topups": count, "units": round(units, 1), "spent": spent,
+        "avg_cost_per_unit": round(spent / units, 2) if units > 0 else None,
+    }
 
 
 def yearly_summary(year=None):
@@ -306,53 +320,66 @@ def yearly_summary(year=None):
             (start, end),
         ).fetchall()
 
-    lines = [f"📊 *{year} KPLC Yearly Summary*", ""]
-    lines.append(f"Total: {total_count} top-ups, {total_units:.0f} units, KES {total_spent:,.0f}")
-    if total_units > 0:
-        lines.append(f"Avg cost/unit: KES {total_spent / total_units:.2f}")
-    lines.append("")
-    for m, units, spent, count in months:
-        lines.append(f"  {calendar.month_abbr[int(m)]}: {units:.0f} units, KES {spent:,.0f} ({count} top-ups)")
-    return "\n".join(lines)
+    return {
+        "year": year, "topups": total_count,
+        "units": round(total_units, 0), "spent": total_spent,
+        "avg_cost_per_unit": round(total_spent / total_units, 2) if total_units > 0 else None,
+        "months": [
+            {"month": calendar.month_abbr[int(m)], "units": round(units, 0), "spent": spent, "topups": count}
+            for m, units, spent, count in months
+        ],
+    }
 
 
-def price_trend():
+def price_trend_data():
     with get_db() as conn:
         rows = conn.execute(
             "SELECT strftime('%Y-%m', timestamp) as m, SUM(amount), SUM(units) "
             "FROM purchases WHERE units > 0 AND amount > 0 GROUP BY m ORDER BY m",
         ).fetchall()
 
-    if not rows:
-        return "Not enough purchase data to detect price trends yet."
-
-    lines = ["💰 *KPLC Price Trend (cost per unit)*", ""]
+    months = []
     prev_cpu = None
     for m, amount, units in rows:
         cpu = amount / units
-        indicator = ""
-        if prev_cpu is not None:
-            pct = ((cpu - prev_cpu) / prev_cpu) * 100
-            if abs(pct) < 1:
-                indicator = " →"
-            elif pct > 0:
-                indicator = f" ↑ +{pct:.1f}%"
-            else:
-                indicator = f" ↓ {pct:.1f}%"
-        lines.append(f"  {m}: KES {cpu:.2f}/unit{indicator}")
+        change_pct = round(((cpu - prev_cpu) / prev_cpu) * 100, 1) if prev_cpu else None
+        months.append({"month": m, "cost_per_unit": round(cpu, 2), "change_pct": change_pct})
         prev_cpu = cpu
 
+    overall_pct = None
     if len(rows) >= 2:
         first_cpu = rows[0][1] / rows[0][2]
         last_cpu = rows[-1][1] / rows[-1][2]
-        overall = ((last_cpu - first_cpu) / first_cpu) * 100
+        overall_pct = round(((last_cpu - first_cpu) / first_cpu) * 100, 1)
+
+    return {"months": months, "overall_change_pct": overall_pct}
+
+
+def price_trend():
+    """Formatted version for sentinel.py."""
+    data = price_trend_data()
+    if not data["months"]:
+        return "Not enough purchase data to detect price trends yet."
+    lines = ["💰 *KPLC Price Trend (cost per unit)*", ""]
+    for m in data["months"]:
+        indicator = ""
+        if m["change_pct"] is not None:
+            if abs(m["change_pct"]) < 1:
+                indicator = " →"
+            elif m["change_pct"] > 0:
+                indicator = f" ↑ +{m['change_pct']}%"
+            else:
+                indicator = f" ↓ {m['change_pct']}%"
+        lines.append(f"  {m['month']}: KES {m['cost_per_unit']:.2f}/unit{indicator}")
+    if data["overall_change_pct"] is not None:
         lines.append("")
-        if abs(overall) < 1:
+        o = data["overall_change_pct"]
+        if abs(o) < 1:
             lines.append("Overall: prices stable")
-        elif overall > 0:
-            lines.append(f"Overall: prices UP {overall:.1f}% since {rows[0][0]}")
+        elif o > 0:
+            lines.append(f"Overall: prices UP {o}% since {data['months'][0]['month']}")
         else:
-            lines.append(f"Overall: prices DOWN {abs(overall):.1f}% since {rows[0][0]}")
+            lines.append(f"Overall: prices DOWN {abs(o)}% since {data['months'][0]['month']}")
     return "\n".join(lines)
 
 
@@ -425,11 +452,11 @@ def _fetch_outage_schedule():
 def check_outages(area=None):
     area = area or get_profile("area")
     if not area:
-        return "I don't know your area yet. Type 'setup' to set your location so I can check for outages."
+        return {"area": None, "matches": [], "error": "no_area"}
 
     scheduled = _fetch_outage_schedule()
     if not scheduled:
-        return "Couldn't fetch the KPLC maintenance schedule right now. Try again later."
+        return {"area": area, "matches": [], "error": "fetch_failed"}
 
     area_lower = area.lower()
     area_words = [w for w in area_lower.split() if len(w) > 3]
@@ -440,20 +467,12 @@ def check_outages(area=None):
         or any(w in s["area_clean"].lower() for w in area_words)
     ]
 
-    if not matches:
-        return f"No planned outages for {re.sub(r'[*_~`<>]', '', area)} this week. You're clear!"
-
-    lines = [f"⚠️ *Planned outages near {re.sub(r'[*_~`<>]', '', area)}:*", ""]
-    for m in matches:
-        lines.append(f"📅 {m['date']}, {m['time']}")
-        lines.append("")
-    lines.append("Charge your devices and plan accordingly.")
-    return "\n".join(lines)
+    return {"area": area, "matches": [{"date": m["date"], "time": m["time"]} for m in matches]}
 
 
 # ── insights ─────────────────────────────────────────────────────────────
 
-def comparison_insights():
+def comparison_insights_data():
     """Week-over-week and day-of-week usage patterns."""
     now = datetime.now()
     week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
@@ -473,20 +492,15 @@ def comparison_insights():
             "SELECT timestamp, balance, notes FROM readings ORDER BY timestamp ASC",
         ).fetchall()
 
-    lines = ["📈 *Usage Insights*", ""]
+    result = {
+        "this_week": {"units": this_units, "spent": this_spent},
+        "last_week": {"units": last_units, "spent": last_spent},
+    }
 
     if last_units > 0 and this_units > 0:
-        diff = ((this_units - last_units) / last_units) * 100
-        if diff > 5:
-            lines.append(f"⬆️ You used {diff:.0f}% more units this week than last week.")
-        elif diff < -5:
-            lines.append(f"⬇️ You used {abs(diff):.0f}% fewer units this week. Poa!")
-        else:
-            lines.append("↔️ Usage ni sawa sawa with last week.")
-    elif this_units > 0:
-        lines.append(f"This week: {this_units:.0f} units (KES {this_spent:,.0f}). No last week data to compare.")
+        result["change_pct"] = round(((this_units - last_units) / last_units) * 100, 0)
 
-    # Day-of-week patterns — compute from actual timestamps, skip auto readings
+    # Day-of-week patterns
     # NOTE: attributes all burned units to the end reading's day, which skews
     # if readings span multiple days.  Acceptable for frequent-reading users.
     fmt = "%Y-%m-%d %H:%M:%S"
@@ -501,7 +515,7 @@ def comparison_insights():
             burned = old_bal - new_bal
             if burned <= 0:
                 continue
-            dow = datetime.strptime(new_ts, fmt).weekday()  # 0=Mon
+            dow = datetime.strptime(new_ts, fmt).weekday()
             day_usage.setdefault(dow, []).append(burned)
 
         if day_usage:
@@ -509,7 +523,30 @@ def comparison_insights():
             avgs = {d: sum(v) / len(v) for d, v in day_usage.items()}
             peak = max(avgs, key=avgs.get)
             low = min(avgs, key=avgs.get)
-            lines.append(f"📅 Heaviest day: {day_names[peak]} ({avgs[peak]:.1f} units avg)")
-            lines.append(f"📅 Lightest day: {day_names[low]} ({avgs[low]:.1f} units avg)")
+            result["heaviest_day"] = {"day": day_names[peak], "avg_units": round(avgs[peak], 1)}
+            result["lightest_day"] = {"day": day_names[low], "avg_units": round(avgs[low], 1)}
 
+    has_data = this_units > 0 or last_units > 0 or "heaviest_day" in result
+    return result if has_data else None
+
+
+def comparison_insights():
+    """Formatted version for sentinel.py."""
+    data = comparison_insights_data()
+    if not data:
+        return None
+    lines = ["📈 *Usage Insights*", ""]
+    if "change_pct" in data:
+        d = data["change_pct"]
+        if d > 5:
+            lines.append(f"⬆️ You used {d:.0f}% more units this week than last week.")
+        elif d < -5:
+            lines.append(f"⬇️ You used {abs(d):.0f}% fewer units this week. Poa!")
+        else:
+            lines.append("↔️ Usage ni sawa sawa with last week.")
+    elif data["this_week"]["units"] > 0:
+        lines.append(f"This week: {data['this_week']['units']:.0f} units (KES {data['this_week']['spent']:,.0f}).")
+    if "heaviest_day" in data:
+        lines.append(f"📅 Heaviest day: {data['heaviest_day']['day']} ({data['heaviest_day']['avg_units']} units avg)")
+        lines.append(f"📅 Lightest day: {data['lightest_day']['day']} ({data['lightest_day']['avg_units']} units avg)")
     return "\n".join(lines) if len(lines) > 2 else None
