@@ -442,7 +442,8 @@ def _fetch_outage_schedule():
             date_fmt = f"{day_name} {day}{suffix} {calendar.month_name[month_num]}"
             time_clean = re.sub(r'(\d+)\.(\d+)', r'\1:\2', time_raw.strip())
             time_clean = time_clean.replace("A.M.", "AM").replace("P.M.", "PM").replace("A.M", "AM").replace("P.M", "PM")
-            results.append({"area": area, "area_clean": area_clean, "date": date_fmt, "time": time_clean})
+            results.append({"area": area, "area_clean": area_clean, "date": date_fmt, "time": time_clean,
+                            "iso_date": f"{parts[2]}-{parts[1]}-{parts[0]}"})
         return results
     except Exception:
         logger.exception("Failed to fetch/parse KPLC outage schedule")
@@ -467,7 +468,7 @@ def check_outages(area=None):
         or any(w in s["area_clean"].lower() for w in area_words)
     ]
 
-    return {"area": area, "matches": [{"date": m["date"], "time": m["time"]} for m in matches]}
+    return {"area": area, "matches": [{"date": m["date"], "time": m["time"], "iso_date": m["iso_date"]} for m in matches]}
 
 
 # ── insights ─────────────────────────────────────────────────────────────

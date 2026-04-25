@@ -74,13 +74,30 @@ The entrypoint outputs **JSON**. Do NOT return the raw JSON to the user. Instead
 - `monthly_summary` / `yearly_summary` — present the spending data conversationally.
 - `spending` — combine monthly summary and price trend data.
 - `price_trend` — present cost-per-unit over time, highlight changes.
-- `outage_check` — if matches exist, warn about planned outages. If none, say they're clear. Handle `error` field (no_area, fetch_failed).
+- `outage_check` — if matches exist, warn about planned outages. Each match includes `iso_date` (YYYY-MM-DD), `date` (human-readable), and `time`. If none, say they're clear. Handle `error` field (no_area, fetch_failed).
+  - **Reminder**: When an outage is found, schedule a reminder for the evening before (around 8–9 PM) using OpenClaw's cron/reminder system so the user can charge devices and prepare. For example, if the outage is on the 25th, remind them on the 24th at 8 PM.
 - `insights` — present week-over-week comparison and day patterns.
 - `no_data` — not enough data yet for the requested feature.
 - `no_profile` — tell the user to run "stima setup".
 - `error` — something went wrong, ask them to try again.
 
 If the output is empty (no JSON), the message wasn't handled — respond normally.
+
+## Agent behavior
+
+**Low balance — help them buy tokens:**
+When `balance` action shows `runway_hours` under 24, or when a `token_recorded` action shows low runway, include KPLC top-up instructions:
+- M-Pesa Paybill: **888880**
+- Account number: their KPLC meter number
+- Tell them: "Lipa via M-Pesa → Paybill 888880 → Account = your meter number → enter amount. Forward the confirmation SMS back to me."
+
+**Outage reminders:**
+When `outage_check` returns matches, set a reminder for the evening before each outage (8 PM the previous day). Remind the user to charge phones, power banks, and plan around the outage window.
+
+**Multi-skill composability:**
+- If the user has a calendar skill installed and an outage is detected, create a calendar event for the outage window.
+- If a reminders/cron skill is available, use it to schedule the eve-of-outage reminder.
+- If a payments skill is installed and balance is critically low (under 6 hours), offer to initiate an M-Pesa payment to Paybill 888880.
 
 **For heartbeat checks (see HEARTBEAT.md):**
 ```
