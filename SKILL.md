@@ -24,8 +24,7 @@ Activate this skill when the user's message matches ANY of these:
 - A forwarded SMS containing "Token:" and "Units:" (KPLC SMS format)
 - A forwarded SMS that mentions Kenya Power or KPLC
 
-**Requires "stima" prefix:**
-All other interactions MUST start with the word "stima". Examples:
+**Direct commands (stima prefix):**
 - "stima" → show interactive menu
 - "stima help" / "stima menu" → show interactive menu
 - "stima 42.5" → meter reading
@@ -41,7 +40,28 @@ All other interactions MUST start with the word "stima". Examples:
 - "stima profile" → show household info
 - "stima reset" → clear profile and re-onboard
 
-If a message does NOT start with "stima" and is NOT a forwarded KPLC SMS, do NOT activate this skill.
+**Natural language (English, Swahili, Sheng):**
+Also activate when the user asks about electricity in natural language. Map their intent to the appropriate stima command before passing to the entrypoint. Examples:
+
+| User says | Map to |
+|---|---|
+| "will my power last until Monday?" | `stima balance` |
+| "stima itaisha lini?" | `stima balance` |
+| "how much have I spent on electricity?" | `stima monthly` |
+| "nimetumia pesa ngapi kwa stima?" | `stima monthly` |
+| "when is the next power cut?" | `stima outage` |
+| "kuna blackout lini?" | `stima outage` |
+| "bei ya stima imeongezeka?" | `stima price` |
+| "nimebakisha units ngapi?" | `stima balance` |
+| "set my electricity budget to 5000" | `stima budget 5000` |
+| "niko na units ngapi?" | `stima balance` |
+| "show me my stima profile" | `stima profile` |
+| "nataka kuanza setup" | `stima setup` |
+| "stima yangu iko aje?" | `stima balance` |
+
+When routing a natural language message, prepend "stima" followed by the relevant keyword before passing it to the entrypoint. For example, if the user says "stima itaisha lini?", pass `stima balance` to the entrypoint.
+
+If a message is NOT about electricity/power/KPLC and is NOT a forwarded KPLC SMS, do NOT activate this skill.
 
 ## How to use
 
