@@ -89,19 +89,20 @@ def _handle_message(text):
             response += f"\n{budget_msg}"
         return response
 
-    # All other messages require 'stima' prefix (unless mid-onboarding)
+    # All other messages require 'stima' prefix
     lower = text.lower()
-    pending = get_profile("onboarding_step")
-    if pending is None and not lower.startswith("stima"):
+    if not lower.startswith("stima"):
         return None  # Not for this skill
 
     # Strip 'stima' prefix
-    if lower.startswith("stima"):
-        text = text[5:].strip()
-        lower = text.lower()
+    text = text[5:].strip()
+    lower = text.lower()
 
     # --- Onboarding flow ---
+    pending = get_profile("onboarding_step")
     if pending is not None:
+        if not text:
+            return "Still setting up! " + ONBOARDING_QUESTIONS[int(pending)][1] if pending.isdigit() and int(pending) < len(ONBOARDING_QUESTIONS) else None
         return _handle_onboarding(pending, text)
 
     # --- Empty command = show menu ---
